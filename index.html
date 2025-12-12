@@ -1,77 +1,140 @@
-<!DOCTYPE html>
+
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Lat‑Lon Centroid Calculator</title>
-<style>
-  body { font-family: Arial, sans-serif; margin: 40px; }
-  .row { margin-bottom: 10px; }
-  input { width: 120px; }
-  button { padding: 8px 14px; margin-top: 10px; }
-</style>
+  <meta charset="utf-8" />
+  <title>Lat-Lon Centroid Calculator</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 16px; }
+    .controls { max-width: 980px; margin-bottom: 12px; }
+    .row { margin: 6px 0; }
+    input[type="number"] { width: 140px; padding:6px; margin-right:6px; }
+    label { margin-right: 8px; }
+    button { padding: 8px 12px; }
+    #map { height: 520px; width: 100%; margin-top: 12px; border: 1px solid #ddd; }
+    .note { color: #666; font-size: 0.9rem; margin-top:8px; }
+    .error { color: #b00; }
+  </style>
 </head>
 <body>
-<h2>Lat‑Lon Centroid Calculator</h2>
+  <h1>Lat-Lon Centroid Calculator</h1>
 
-<label>Number of points:</label>
-<select id="count" onchange="renderInputs()">
-  <option value="0">Select</option>
-  ${[...Array(10)].map((_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}
-</select>
+  <div class="controls">
+    <div class="row">
+      <label for="count">Number of points:</label>
+      <select id="count" onchange="renderInputs()">
+        <option value="0">Select</option>
+        <script>for(let i=1;i<=10;i++) document.write(`<option value="${i}">${i}</option>`)</script>
+      </select>
+    </div>
 
-<div id="points"></div>
-<button onclick="calculateCentroid()">Calculate Centre</button>
+    <div id="points"></div>
 
-<h3 id="result"></h3>
+    <div class="row">
+      <button id="calcBtn" onclick="calculateCentroid()">Calculate Centre</button>
+      <button onclick="clearAll()">Clear</button>
+    </div>
 
-<script>
-function renderInputs() {
-  const n = document.getElementById('count').value;
-  const container = document.getElementById('points');
-  container.innerHTML = '';
+    <div id="result" class="row"><strong>Centroid:</strong> Lat <span id="latOut">—</span>, Lon <span id="lonOut">—</span></div>
+    <div id="msg" class="note"></div>
+  </div>
 
-  for (let i = 0; i < n; i++) {
-    container.innerHTML += `
-      <div class='row'>
-        Point ${i+1}: 
-        <input id='lat${i}' placeholder='Latitude'>
-        <input id='lon${i}' placeholder='Longitude'>
-      </div>`;
-  }
-}
+  <div id="map"></div>
 
-function calculateCentroid() {
-  const n = document.getElementById('count').value;
-  const pts = [];
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  for (let i = 0; i < n; i++) {
-    const lat = parseFloat(document.getElementById(`lat${i}`).value);
-    const lon = parseFloat(document.getElementById(`lon${i}`).value);
-    if (isNaN(lat) || isNaN(lon)) {
-      alert("Enter valid numbers for all lat‑longs");
-      return;
+  <script>
+    function renderInputs() {
+      const n = parseInt(document.getElementById('count').value, 10) || 0;
+      const container = document.getElementById('points');
+      container.innerHTML = '';
+      for (let i=0; i<n; i++) {
+        const div = document.createElement('div');
+        div.className = 'row';
+        div.innerHTML = `
+          <label>Point ${i+1}:</label>
+          <input type="number" step="any" id="lat${i}" placeholder="Latitude (e.g. 12.9716)">
+          <input type="number" step="any" id="lon${i}" placeholder="Longitude (e.g. 77.5946)">
+        `;
+        container.appendChild(div);
+      }
+      document.getElementById('msg').textContent = n ? '' : 'Choose number of points.';
     }
-    pts.push([lat, lon]);
-  }
 
-  let x=0, y=0, z=0;
-  pts.forEach(([lat, lon]) => {
-    const latR = lat * Math.PI/180;
-    const lonR = lon * Math.PI/180;
-    x += Math.cos(latR) * Math.cos(lonR);
-    y += Math.cos(latR) * Math.sin(lonR);
-    z += Math.sin(latR);
-  });
+    function centroidLatLon(points) {
+      let x=0, y=0, z=0;
+      points.forEach(p => {
+        const lat = p[0] * Math.PI/180;
+        const lon = p[1] * Math.PI/180;
+        x += Math.cos(lat)*Math.cos(lon);
+        y += Math.cos(lat)*Math.sin(lon);
+        z += Math.sin(lat);
+      });
+      x/=points.length; y/=points.length; z/=points.length;
+      const lon = Math.atan2(y,x);
+      const hyp = Math.sqrt(x*x+y*y);
+      const lat = Math.atan2(z,hyp);
+      return [lat*180/Math.PI, lon*180/Math.PI];
+    }
 
-  x /= n; y /= n; z /= n;
+    const map = L.map('map').setView([20,0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
 
-  const lon = Math.atan2(y, x);
-  const hyp = Math.sqrt(x*x + y*y);
-  const lat = Math.atan2(z, hyp);
+    let markersGroup = L.layerGroup().addTo(map);
+    let centroidMarker = null;
 
-  document.getElementById('result').innerText = 
-    `Centroid: Lat ${ (lat*180/Math.PI).toFixed(6) }, Lon ${ (lon*180/Math.PI).toFixed(6) }`;
-}
-</script>
+    function calculateCentroid() {
+      const n = parseInt(document.getElementById('count').value, 10) || 0;
+      const msg = document.getElementById('msg');
+      msg.className = 'note';
+      msg.textContent = '';
+
+      if (!n) { msg.textContent = 'Select number of points.'; msg.className='note error'; return; }
+
+      const pts = [];
+      for (let i=0;i<n;i++) {
+        const latV = document.getElementById(`lat${i}`).value;
+        const lonV = document.getElementById(`lon${i}`).value;
+        if (!latV || !lonV) {
+          msg.textContent = 'Please enter all lat/long values.'; msg.className='note error'; return;
+        }
+        const lat = parseFloat(latV), lon = parseFloat(lonV);
+        pts.push([lat, lon]);
+      }
+
+      const [cLat, cLon] = centroidLatLon(pts);
+
+      document.getElementById('latOut').textContent = cLat.toFixed(6);
+      document.getElementById('lonOut').textContent = cLon.toFixed(6);
+
+      markersGroup.clearLayers();
+      pts.forEach((p, idx) => {
+        L.circleMarker([p[0], p[1]], {radius:6}).addTo(markersGroup)
+          .bindPopup(`Point ${idx+1}<br>${p[0]}, ${p[1]}`);
+      });
+      if (centroidMarker) map.removeLayer(centroidMarker);
+
+      centroidMarker = L.marker([cLat, cLon])
+        .addTo(map)
+        .bindPopup(`Centroid<br>${cLat.toFixed(6)}, ${cLon.toFixed(6)}`).openPopup();
+
+      const allPoints = pts.map(p=>[p[0],p[1]]);
+      allPoints.push([cLat, cLon]);
+      map.fitBounds(L.latLngBounds(allPoints).pad(0.25));
+    }
+
+    function clearAll() {
+      document.getElementById('count').value = 0;
+      document.getElementById('points').innerHTML = '';
+      document.getElementById('latOut').textContent = '—';
+      document.getElementById('lonOut').textContent = '—';
+      document.getElementById('msg').textContent = '';
+      markersGroup.clearLayers();
+      if (centroidMarker) map.removeLayer(centroidMarker);
+      map.setView([20,0],2);
+    }
+  </script>
 </body>
 </html>
