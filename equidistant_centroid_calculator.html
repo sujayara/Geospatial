@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Centroid Calculator</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" 
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" 
+        crossorigin=""/>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 16px; }
+    .controls { max-width: 980px; margin-bottom: 12px; }
+    .row { margin: 6px 0; }
+    input[type="number"] { width: 140px; padding:6px; margin-right:6px; }
+    label { margin-right: 8px; }
+    button { padding: 8px 12px; }
+    #map { height: 520px; width: 100%; margin-top: 12px; border: 1px solid #ddd; }
+    .note { color: #666; font-size: 0.9rem; margin-top:8px; }
+    .error { color: #b00; }
+    .distances { margin-top: 12px; padding: 10px; background: #f5f5f5; border-radius: 4px; }
+    .distances h4 { margin: 0 0 8px 0; font-size: 0.9rem; }
+    .distance-list { font-size: 0.8rem; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <h1>Centroid Calculator</h1>
+
+  <div class="controls">
+    <div class="row">
+      <label for="count">Number of points:</label>
+      <select id="count" onchange="renderInputs()">
+        <option value="0">Select</option>
+        <script>for(let i=1;i<=10;i++) document.write(`<option value="${i}">${i}</option>`)</script>
+      </select>
+    </div>
+
+    <div id="points"></div>
+
+    <div class="row">
+      <button id="calcBtn" onclick="calculateCentroid()">Calculate Centre</button>
+      <button onclick="clearAll()">Clear</button>
+    </div>
+
+    <div id="result" class="row"><strong>Equidistant Centroid:</strong> Lat <span id="latOut">—</span>, Lon <span id="lonOut">—</span></div>
+    <div id="distances" class="distances" style="display:none;">
+      <h4>Distances from centroid (km):</h4>
+      <div id="distanceList" class="distance-list"></div>
+      <div style="margin-top: 8px; font-size: 0.8rem; color: #666;">
+        Range: <span id="rangeOut">—</span> km | Std Dev: <span id="stdOut">—</span> km
+      </div>
+    </div>
+    <div id="msg" class="note"></div>
+  </div>
+
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" 
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" 
+          crossorigin=""></script>
+
+  <script>
+    // Global variables
+    var map = null;
+    var markersGroup = null;
+    var centroidMarker = null;
+    var mapInitialized = false;
+
+    function initializeMap() {
+      if (typeof L !== 'undefined' && !mapInitialized) {
+        try {
+          map = L.map('map').setView([20, 0], 2);
+          
+          // Use OpenStreetMap tiles
+          L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+          }).addTo(map);
+          
+          markersGroup = L.layerGroup().addTo(map);
+          mapInitialized = true;
+          console.log('Map initialized successfully');
+        } catch (error) {
+          console.error('Map initialization error:', error);
+          setTimeout(initializeMap, 1000);
+        }
+      } else if (typeof L === 'undefined') {
+        setTimeout(initializeMap, 500);
+      }
+    }
+
+    function renderInputs() {
+      const n = parseInt(document.getElementById('count').value, 10) || 0;
+      const container = document.getElementById('points');
+      container.innerHTML = '';
+      for (let i=0; i<n; i++) {
+        const div = document.createElement('div');
+        div.className = 'row';
+        div.innerHTML = `
+          <label>Point ${i+1}:</label>
+          <input type="number" step="any" id="lat${i}" placeholder="Latitude (e.g. 12.9716)">
+          <input type="number" step="any" id="lon${i}" placeholder="Longitude (e.g. 77.5946)">
+        `;
+        container.appendChild(div);
+      }
+      document.getElementById('msg').textContent = n ? '' : 'Choose number of points.';
+      document.getElementById('distances').style.display = 'none';
+    }
+
+    function greatCircleDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371; // Earth's radius in km
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    function equidistantCentroid(points) {
+      if (points.length < 2) return points[0] || [0, 0];
+      
+      // Start with simple average
+      let currentLat = points.reduce((sum, p) => sum + p[0], 0) / points.length;
+      let currentLon = points.reduce((sum, p) => sum + p[1], 0) / points.length;
+      
+      const maxIterations = 1000;
+      let step = 1.0;
+      const minStep = 0.00001;
+      
+      function getDistanceVariance(lat, lon) {
+        const distances = points.map(p => greatCircleDistance(lat, lon, p[0], p[1]));
+        const mean = distances.reduce((a, b) => a + b, 0) / distances.length;
+        return distances.reduce((sum, d) => sum + (d - mean) * (d - mean), 0) / distances.length;
+      }
+
+      let currentVariance = getDistanceVariance(currentLat, currentLon);
+      let noImprovementCount = 0;
+
+      for (let iter = 0; iter < maxIterations; iter++) {
+        let bestLat = currentLat;
+        let bestLon = currentLon;
+        let bestVariance = currentVariance;
+        let improved = false;
+        
+        const directions = [
+          [step, 0], [-step, 0], [0, step], [0, -step],
+          [step, step], [step, -step], [-step, step], [-step, -step]
+        ];
+        
+        for (const [dLat, dLon] of directions) {
+          const testLat = currentLat + dLat;
+          const testLon = currentLon + dLon;
+          const testVariance = getDistanceVariance(testLat, testLon);
+          
+          if (testVariance < bestVariance) {
+            bestLat = testLat;
+            bestLon = testLon;
+            bestVariance = testVariance;
+            improved = true;
+          }
+        }
+        
+        if (improved) {
+          currentLat = bestLat;
+          currentLon = bestLon;
+          currentVariance = bestVariance;
+          noImprovementCount = 0;
+        } else {
+          noImprovementCount++;
+          if (noImprovementCount > 10) {
+            step *= 0.5;
+            noImprovementCount = 0;
+            if (step < minStep) break;
+          }
+        }
+        
+        if (currentVariance < 1.0) break;
+      }
+
+      return [currentLat, currentLon];
+    }
+
+    function calculateStats(distances) {
+      const mean = distances.reduce((a, b) => a + b, 0) / distances.length;
+      const variance = distances.reduce((sum, d) => sum + Math.pow(d - mean, 2), 0) / distances.length;
+      const stdDev = Math.sqrt(variance);
+      const range = Math.max(...distances) - Math.min(...distances);
+      return { mean, stdDev, range };
+    }
+
+    function calculateCentroid() {
+      const n = parseInt(document.getElementById('count').value, 10) || 0;
+      const msg = document.getElementById('msg');
+      msg.className = 'note';
+      msg.textContent = '';
+
+      if (!n) { 
+        msg.textContent = 'Select number of points.'; 
+        msg.className = 'note error'; 
+        return; 
+      }
+
+      const pts = [];
+      for (let i = 0; i < n; i++) {
+        const latV = document.getElementById(`lat${i}`).value;
+        const lonV = document.getElementById(`lon${i}`).value;
+        if (!latV || !lonV) {
+          msg.textContent = 'Please enter all lat/long values.'; 
+          msg.className = 'note error'; 
+          return;
+        }
+        const lat = parseFloat(latV);
+        const lon = parseFloat(lonV);
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          msg.textContent = `Invalid coordinates for Point ${i+1}. Lat: -90 to 90, Lon: -180 to 180`; 
+          msg.className = 'note error'; 
+          return;
+        }
+        pts.push([lat, lon]);
+      }
+
+      const [cLat, cLon] = equidistantCentroid(pts);
+
+      document.getElementById('latOut').textContent = cLat.toFixed(6);
+      document.getElementById('lonOut').textContent = cLon.toFixed(6);
+
+      const distances = pts.map(p => greatCircleDistance(cLat, cLon, p[0], p[1]));
+      const stats = calculateStats(distances);
+      
+      const distanceText = distances.map((dist, idx) => 
+        `Point ${idx+1}: ${dist.toFixed(1)} km`
+      ).join('<br>');
+      
+      document.getElementById('distanceList').innerHTML = distanceText;
+      document.getElementById('rangeOut').textContent = stats.range.toFixed(1);
+      document.getElementById('stdOut').textContent = stats.stdDev.toFixed(1);
+      document.getElementById('distances').style.display = 'block';
+
+      // Update map if initialized
+      if (mapInitialized && map && markersGroup) {
+        try {
+          markersGroup.clearLayers();
+          
+          pts.forEach((p, idx) => {
+            L.circleMarker([p[0], p[1]], {
+              radius: 8,
+              fillColor: '#ff7800',
+              color: '#000',
+              weight: 1,
+              opacity: 1,
+              fillOpacity: 0.8
+            }).addTo(markersGroup)
+              .bindPopup(`<b>Point ${idx+1}</b><br>Lat: ${p[0]}<br>Lon: ${p[1]}`);
+          });
+          
+          if (centroidMarker) {
+            map.removeLayer(centroidMarker);
+          }
+
+          centroidMarker = L.marker([cLat, cLon], {
+            icon: L.divIcon({
+              className: 'centroid-marker',
+              html: '<div style="background-color: #ff0000; width: 20px; height: 20px; border-radius: 50%; border: 2px solid white;"></div>',
+              iconSize: [20, 20],
+              iconAnchor: [10, 10]
+            })
+          }).addTo(map)
+            .bindPopup(`<b>Equidistant Centroid</b><br>Lat: ${cLat.toFixed(6)}<br>Lon: ${cLon.toFixed(6)}`);
+
+          const allPoints = [...pts, [cLat, cLon]];
+          const bounds = L.latLngBounds(allPoints);
+          map.fitBounds(bounds.pad(0.1));
+          
+        } catch (error) {
+          console.error('Map update error:', error);
+        }
+      }
+
+      msg.textContent = 'Equidistant centroid calculated!';
+    }
+
+    function clearAll() {
+      document.getElementById('count').value = 0;
+      document.getElementById('points').innerHTML = '';
+      document.getElementById('latOut').textContent = '—';
+      document.getElementById('lonOut').textContent = '—';
+      document.getElementById('msg').textContent = '';
+      document.getElementById('distances').style.display = 'none';
+      
+      if (mapInitialized && map && markersGroup) {
+        try {
+          markersGroup.clearLayers();
+          if (centroidMarker) {
+            map.removeLayer(centroidMarker);
+            centroidMarker = null;
+          }
+          map.setView([20, 0], 2);
+        } catch (error) {
+          console.error('Clear error:', error);
+        }
+      }
+    }
+
+    // Initialize map when DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(initializeMap, 200);
+    });
+
+    // Backup initialization
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        if (!mapInitialized) {
+          initializeMap();
+        }
+      }, 500);
+    });
+  </script>
+</body>
+</html>
