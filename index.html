@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Lat‑Lon Centroid Calculator</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 40px; }
+  .row { margin-bottom: 10px; }
+  input { width: 120px; }
+  button { padding: 8px 14px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<h2>Lat‑Lon Centroid Calculator</h2>
+
+<label>Number of points:</label>
+<select id="count" onchange="renderInputs()">
+  <option value="0">Select</option>
+  ${[...Array(10)].map((_,i)=>`<option value="${i+1}">${i+1}</option>`).join('')}
+</select>
+
+<div id="points"></div>
+<button onclick="calculateCentroid()">Calculate Centre</button>
+
+<h3 id="result"></h3>
+
+<script>
+function renderInputs() {
+  const n = document.getElementById('count').value;
+  const container = document.getElementById('points');
+  container.innerHTML = '';
+
+  for (let i = 0; i < n; i++) {
+    container.innerHTML += `
+      <div class='row'>
+        Point ${i+1}: 
+        <input id='lat${i}' placeholder='Latitude'>
+        <input id='lon${i}' placeholder='Longitude'>
+      </div>`;
+  }
+}
+
+function calculateCentroid() {
+  const n = document.getElementById('count').value;
+  const pts = [];
+
+  for (let i = 0; i < n; i++) {
+    const lat = parseFloat(document.getElementById(`lat${i}`).value);
+    const lon = parseFloat(document.getElementById(`lon${i}`).value);
+    if (isNaN(lat) || isNaN(lon)) {
+      alert("Enter valid numbers for all lat‑longs");
+      return;
+    }
+    pts.push([lat, lon]);
+  }
+
+  let x=0, y=0, z=0;
+  pts.forEach(([lat, lon]) => {
+    const latR = lat * Math.PI/180;
+    const lonR = lon * Math.PI/180;
+    x += Math.cos(latR) * Math.cos(lonR);
+    y += Math.cos(latR) * Math.sin(lonR);
+    z += Math.sin(latR);
+  });
+
+  x /= n; y /= n; z /= n;
+
+  const lon = Math.atan2(y, x);
+  const hyp = Math.sqrt(x*x + y*y);
+  const lat = Math.atan2(z, hyp);
+
+  document.getElementById('result').innerText = 
+    `Centroid: Lat ${ (lat*180/Math.PI).toFixed(6) }, Lon ${ (lon*180/Math.PI).toFixed(6) }`;
+}
+</script>
+</body>
+</html>
